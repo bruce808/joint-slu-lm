@@ -37,7 +37,7 @@ def _step(time, sequence_length, min_sequence_length, max_sequence_length, zero_
     # the previous state & zero output, and which values should get
     # a calculated state & output.
     copy_cond = (time >= sequence_length)
-    return math_ops.select(copy_cond, zero_logit, logit)
+    return array_ops.where(copy_cond, zero_logit, logit)
 
   logit = control_flow_ops.cond(
       time < min_sequence_length, existing_logit, copy_through)
@@ -65,7 +65,7 @@ def _reverse_seq(input_seq, lengths):
     input_.set_shape(input_shape)
 
   # Join into (time, batch_size, depth)
-  s_joined = array_ops.pack(input_seq)
+  s_joined = array_ops.stack(input_seq)
 
   # TODO(schuster, ebrevdo): Remove cast when reverse_sequence takes int32
   if lengths is not None:
@@ -74,7 +74,7 @@ def _reverse_seq(input_seq, lengths):
   # Reverse along dimension 0
   s_reversed = array_ops.reverse_sequence(s_joined, lengths, 0, 1)
   # Split again into list
-  result = array_ops.unpack(s_reversed)
+  result = array_ops.unstack(s_reversed)
   for r in result:
     r.set_shape(input_shape)
   return result
@@ -157,7 +157,7 @@ def generate_sequence_output(encoder_outputs,
       sequence_length = math_ops.to_int32(sequence_length)
     if sequence_length is not None:  # Prepare variables
       zero_logit = array_ops.zeros(
-          array_ops.pack([batch_size, num_decoder_symbols]), encoder_outputs[0].dtype)
+          array_ops.stack([batch_size, num_decoder_symbols]), encoder_outputs[0].dtype)
       zero_logit.set_shape(
           tensor_shape.TensorShape([fixed_batch_size.value, num_decoder_symbols]))
       min_sequence_length = math_ops.reduce_min(sequence_length)
@@ -208,8 +208,7 @@ def sequence_loss_by_example(logits, targets, weights,
   if len(targets) != len(logits) or len(weights) != len(logits):
     raise ValueError("Lengths of logits, weights, and targets must be the same "
                      "%d, %d, %d." % (len(logits), len(weights), len(targets)))
-  with ops.op_scope(logits + targets + weights, name,
-                    "sequence_loss_by_example"):
+  with ops.name_scope(name, "sequence_loss_by_example", logits + targets + weights):
     log_perp_list = []
     for logit, target, weight in zip(logits, targets, weights):
       if softmax_loss_function is None:
@@ -218,7 +217,7 @@ def sequence_loss_by_example(logits, targets, weights,
         # violates our general scalar strictness policy.
         target = array_ops.reshape(target, [-1])
         crossent = nn_ops.sparse_softmax_cross_entropy_with_logits(
-            logit, target)
+            logits=logit, labels=target)
       else:
         crossent = softmax_loss_function(logit, target)
       log_perp_list.append(crossent * weight)
@@ -252,7 +251,7 @@ def sequence_loss(logits, targets, weights,
   Raises:
     ValueError: If len(logits) is different from len(targets) or len(weights).
   """
-  with ops.op_scope(logits + targets + weights, name, "sequence_loss"):
+  with ops.name_scope(name, "sequence_loss", logits + targets + weights):
     cost = math_ops.reduce_sum(sequence_loss_by_example(
         logits, targets, weights,
         average_across_timesteps=average_across_timesteps,
@@ -277,7 +276,7 @@ def generate_task_output(encoder_outputs, additional_inputs, encoder_state, targ
                      "bucket (%d)." % (len(targets), buckets[-1][1]))
 
   all_inputs = encoder_outputs + targets + weights
-  with ops.op_scope(all_inputs, name, "model_with_buckets"):
+  with ops.name_scope(name, "model_with_buckets", all_inputs):
     if scope == 'intent':
         logits, regularizers, sampled_intents = intent_results
         sampled_tags = list()
